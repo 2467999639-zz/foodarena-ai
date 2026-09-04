@@ -2,6 +2,42 @@
 
 校园干饭辩论赛与美食擂台：基于敏捷方法的 AI 原生选餐决策应用。
 
+## 三轮双 Agent 控制器
+
+`foodarena_ai.debate` 提供与模型供应商无关的三轮辩论骨架。控制器只接受
+`RUNNING` 且尚无消息的会话，按固定顺序让 `sichuan_spicy`（川辣派）与
+`cantonese_wellness`（粤式养生派）各发言一次，共运行 3 轮、生成 6 条
+`AgentMessage`。每条消息包含 `round`、`agent`、`argument` 和 `evidence`；
+全部轮次成功后，会话一次性进入 `VALIDATING`。任一 Agent 失败时不会写入
+部分消息，也不会改变会话状态。
+
+Agent 只需实现 `DebateAgent` 协议，因此测试和本地演示可使用
+`MockDebateAgent`，不访问外部模型服务。最小调用方式如下：
+
+```python
+from foodarena_ai.debate import (
+    AgentArgument,
+    AgentName,
+    DebateController,
+    DebateSession,
+    MockDebateAgent,
+    SessionStatus,
+)
+
+turns = [
+    AgentArgument(argument=f"第 {round_number} 轮观点", evidence="Mock 证据")
+    for round_number in range(1, 4)
+]
+session = DebateSession(status=SessionStatus.RUNNING)
+controller = DebateController(
+    [
+        MockDebateAgent(AgentName.SICHUAN_SPICY, turns),
+        MockDebateAgent(AgentName.CANTONESE_WELLNESS, turns),
+    ]
+)
+controller.run(session)
+```
+
 ## SiliconFlow 连通 Demo
 
 项目包含一个最小的 SiliconFlow OpenAI 兼容客户端，用于验证
