@@ -108,7 +108,7 @@ class MockReasoner:
                 taste_score = 0.2
         else:
             taste_score = match
-            if item.tags:
+            if item.tags and _looks_like_flavour(prefs.taste):
                 reasons.append(f"{item.name} 风味契合「{prefs.taste}」")
 
         budget = min(
@@ -138,3 +138,63 @@ class MockReasoner:
         if weather is Weather.HUMID and item.rich_level <= 2 and item.spice_level <= 1:
             return 1.0
         return 0.5
+
+
+def _looks_like_flavour(text: str) -> bool:
+    """True when free text reads as a genuine taste keyword rather than an
+    instruction, question or other non-flavour utterance (so the mock never
+    echoes sanitised user text back as a fake flavour match)."""
+    lowered = text.lower()
+    flavour_markers = (
+        "辣",
+        "麻",
+        "甜",
+        "酸",
+        "咸",
+        "鲜",
+        "香",
+        "清淡",
+        "重口",
+        "油",
+        "素",
+        "养生",
+        "汤",
+        "粥",
+        "面",
+        "饭",
+        "味",
+        "spicy",
+        "sweet",
+        "sour",
+        "salty",
+        "light",
+        "hot",
+        "egg",
+        "soup",
+        "noodle",
+    )
+    question_or_instruction = (
+        "?",
+        "？",
+        "请",
+        "忽略",
+        "复述",
+        "泄露",
+        "记住",
+        "作为",
+        "你是",
+        "扮演",
+        "ignore",
+        "repeat",
+        "prompt",
+        "system",
+        "instruction",
+        "forget",
+        "now",
+        "pretend",
+        ":",
+        "：",
+    )
+    if any(marker in lowered for marker in question_or_instruction):
+        return False
+    return any(marker in lowered for marker in flavour_markers)

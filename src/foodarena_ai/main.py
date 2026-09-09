@@ -19,7 +19,7 @@ import logging
 from contextlib import asynccontextmanager
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -92,8 +92,10 @@ def _missing_session(exc: SessionNotFound) -> HTTPException:
     response_model=SessionSummary,
     status_code=201,
 )
-def create_session(payload: PreferenceInput) -> SessionSummary:
-    service = get_service()
+def create_session(
+    payload: PreferenceInput,
+    service: DebateService = Depends(get_service),
+) -> SessionSummary:
     view = service.create_session(payload)
     return SessionSummary(session_id=view.session_id, status=view.status)
 
@@ -102,9 +104,9 @@ def create_session(payload: PreferenceInput) -> SessionSummary:
 def run_debate(
     session_id: UUID,
     payload: DebateStartRequest | None = None,
+    service: DebateService = Depends(get_service),
 ) -> SessionView:
     """Run the debate (idempotent re-entry returns current state)."""
-    service = get_service()
     provider = payload.provider if payload is not None else None
     try:
         view, _events = service.run_debate(session_id, provider=provider)
@@ -114,22 +116,27 @@ def run_debate(
 
 
 @app.get("/api/v1/sessions/{session_id}", response_model=SessionView)
-def get_session(session_id: UUID) -> SessionView:
+def get_session(
+    session_id: UUID,
+    service: DebateService = Depends(get_service),
+) -> SessionView:
     try:
-        return get_service().get_session(session_id)
+        return service.get_session(session_id)
     except SessionNotFound as exc:
         raise _missing_session(exc) from exc
 
 
 @app.get("/api/v1/sessions/{session_id}/events", response_class=StreamingResponse)
-async def session_events(session_id: UUID) -> StreamingResponse:
+async def session_events(
+    session_id: UUID,
+    service: DebateService = Depends(get_service),
+) -> StreamingResponse:
     """SSE stream of the debate.
 
     For a PENDING session the debate runs live and events stream as they are
     produced. For a session already started/finished the stored events are
     replayed so a reconnecting client rebuilds state without duplicate runs.
     """
-    service = get_service()
     try:
         current = service.get_session(session_id)
         if current.status is SessionStatus.PENDING:
@@ -158,9 +165,12 @@ async def session_events(session_id: UUID) -> StreamingResponse:
 
 
 @app.get("/api/v1/sessions/{session_id}/report")
-def get_report(session_id: UUID) -> dict:
+def get_report(
+    session_id: UUID,
+    service: DebateService = Depends(get_service),
+) -> dict:
     try:
-        view = get_service().get_session(session_id)
+        view = service.get_session(session_id)
     except SessionNotFound as exc:
         raise _missing_session(exc) from exc
     if view.status is not SessionStatus.SUCCESS or view.report is None:
