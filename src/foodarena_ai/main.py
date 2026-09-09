@@ -138,24 +138,31 @@ async def session_events(
 ) -> StreamingResponse:
     """SSE stream of the debate.
 
-    For a PENDING session the debate runs live and events stream as they are
-    produced. For a session already started/finished the stored events are
-    replayed so a reconnecting client rebuilds state without duplicate runs.
+    For a PENDING session the debate runs live and each event (status, round,
+    message, report) is forwarded as soon as it is produced. For a session
+    already started/finished the stored events are replayed so a reconnecting
+    client rebuilds state without duplicate runs.
     """
     try:
         current = service.get_session(session_id)
         if current.status is SessionStatus.PENDING:
-            _view, events = service.run_debate(session_id)
-            status_label = _view.status.value
+            steps = service.stream_debate(session_id)
         else:
-            events = service.replay_events(session_id)
-            status_label = current.status.value
+            steps = None
     except SessionNotFound as exc:
         raise _missing_session(exc) from exc
 
     async def stream():
-        for event in events:
-            yield event.sse()
+        if steps is not None:
+            view: SessionView | None = None
+            for _view, event in steps:
+                view = _view
+                yield event.sse()
+            status_label = view.status.value if view is not None else "FAILED"
+        else:
+            for event in service.replay_events(session_id):
+                yield event.sse()
+            status_label = current.status.value
         yield f"event: done\ndata: {status_label}\n\n"
 
     return StreamingResponse(

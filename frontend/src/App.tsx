@@ -28,8 +28,18 @@ function navigate(route: string) {
 
 const STORAGE_KEY = 'foodarena_session_id';
 
+function useHashRoute(): Route {
+  const [route, setRoute] = useState<Route>(() => readRoute());
+  useEffect(() => {
+    const onChange = () => setRoute(readRoute());
+    window.addEventListener('hashchange', onChange);
+    return () => window.removeEventListener('hashchange', onChange);
+  }, []);
+  return route;
+}
+
 export default function App() {
-  const route = readRoute();
+  const route = useHashRoute();
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -71,7 +81,8 @@ export default function App() {
     );
   }
 
-  // Debate route: live-stream the debate and follow it to the report.
+  // Debate route: live-stream the debate; the finished report is reached via
+  // the "查看完整战报" button instead of an automatic redirect.
   if (route.page === 'debate') {
     return (
       <Shell onHome={startAgain}>
@@ -102,18 +113,6 @@ function DebateRoute({
   onStartAgain: () => void;
 }) {
   const { state } = useLiveSession(sessionId, true);
-
-  // Once the debate finishes with a report, auto-navigate to the report page.
-  useEffect(() => {
-    if (state.status === 'SUCCESS' && state.report) {
-      const timeout = window.setTimeout(
-        () => navigate(`#/report/${sessionId}`),
-        1200,
-      );
-      return () => window.clearTimeout(timeout);
-    }
-    return undefined;
-  }, [state.status, state.report, sessionId]);
 
   return (
     <DebateView

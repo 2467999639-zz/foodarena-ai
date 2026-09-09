@@ -28,29 +28,12 @@ function badgeClass(status: SessionStatus): string {
 export function DebateView({ state, sessionId, onRetry, onStartAgain }: Props) {
   const { status, currentRound, messages, report } = state;
 
-  if (status === 'FAILED') {
-    return (
-      <div className="card error-card">
-        <h2>😵 辩论出错了</h2>
-        <p className="muted">
-          {state.failureReason ?? '未知错误'}。你可以稍后重试本场辩论。
-        </p>
-        <div className="row gap">
-          <button className="btn btn-primary" onClick={onRetry}>
-            重试
-          </button>
-          <button className="btn btn-ghost" onClick={onStartAgain}>
-            重新开始
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   const grouped: Record<number, AgentMessage[]> = {};
   for (const message of messages) {
     (grouped[message.round] ??= []).push(message);
   }
+
+  const busy = status === 'RUNNING' || status === 'VALIDATING';
 
   return (
     <div className="debate-wrap">
@@ -61,7 +44,7 @@ export function DebateView({ state, sessionId, onRetry, onStartAgain }: Props) {
         </div>
         <span className={badgeClass(status)}>
           {STATUS_LABELS[status]}
-          {(status === 'RUNNING' || status === 'VALIDATING') && '…'}
+          {busy && '…'}
         </span>
       </header>
 
@@ -75,39 +58,80 @@ export function DebateView({ state, sessionId, onRetry, onStartAgain }: Props) {
       <div className="rounds">
         {[1, 2, 3].map((roundNumber) => {
           const roundMessages = grouped[roundNumber] ?? [];
+          const thinking = busy && currentRound === roundNumber;
           return (
             <section key={roundNumber} className="round-block">
               <div className="round-heading">
                 <span>{ROUND_NAMES[roundNumber - 1]}</span>
-                {currentRound === roundNumber &&
-                  status !== 'SUCCESS' &&
-                  roundMessages.length < 2 && <span className="pulse-dot" />}
+                {thinking && roundMessages.length < 2 && (
+                  <span className="pulse-dot" />
+                )}
               </div>
               {roundMessages.length === 0 ? (
-                <p className="muted placeholder">两位大厨还在思考…</p>
+                <p className="muted placeholder">
+                  {thinking || currentRound === null
+                    ? '大厨正在思考…'
+                    : '尚未进行到本轮'}
+                </p>
               ) : (
                 roundMessages.map((message) => (
-                  <SpeechCard key={`${message.agent}-${message.round}`} message={message} />
+                  <SpeechCard
+                    key={`${message.agent}-${message.round}`}
+                    message={message}
+                  />
                 ))
+              )}
+              {thinking && roundMessages.length === 1 && (
+                <p className="muted placeholder">对方正在回应…</p>
               )}
             </section>
           );
         })}
       </div>
 
-      {status === 'SUCCESS' && report && (
+      {/* Terminal states, always shown under the transcript. */}
+      {status === 'FAILED' && (
+        <div className="card error-card">
+          <h2>😵 辩论出错了</h2>
+          <p className="muted">
+            {state.failureReason ?? '未知错误'}。你可以稍后重试本场辩论。
+          </p>
+          <div className="row gap">
+            <button className="btn btn-primary" onClick={onRetry}>
+              重试
+            </button>
+            <button className="btn btn-ghost" onClick={onStartAgain}>
+              重新开始
+            </button>
+          </div>
+        </div>
+      )}
+
+      {status === 'SUCCESS' && (
         <div className="card report-card">
-          <h2>🏆 干饭战报</h2>
-          <p className="dish">{AGENT_EMOJI[report.cuisine === 'sichuan' ? 'sichuan_spicy' : 'cantonese_wellness']} {report.dish}</p>
-          <p className="reason">{report.reason}</p>
-          <button
-            className="btn btn-primary"
-            onClick={() => {
-              window.location.hash = `#/report/${sessionId}`;
-            }}
-          >
-            查看完整战报
-          </button>
+          {report ? (
+            <>
+              <h2>🏆 干饭战报已出炉</h2>
+              <p className="dish">
+                {AGENT_EMOJI[report.cuisine === 'sichuan' ? 'sichuan_spicy' : 'cantonese_wellness']}{' '}
+                {report.dish}
+              </p>
+              <p className="reason">{report.reason}</p>
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  window.location.hash = `#/report/${sessionId}`;
+                }}
+              >
+                查看完整战报与评分
+              </button>
+            </>
+          ) : (
+            <div className="centered inline">
+              <div className="spinner" />
+              <p className="muted">正在让裁判长打分…</p>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -116,9 +140,8 @@ export function DebateView({ state, sessionId, onRetry, onStartAgain }: Props) {
 
 function SpeechCard({ message }: { message: AgentMessage }) {
   const agent = message.agent;
-  const sideClass = agentSide(agent);
   return (
-    <article className={`speech ${sideClass}`}>
+    <article className={`speech ${agentSide(agent)}`}>
       <div className="speech-avatar">{AGENT_EMOJI[agent]}</div>
       <div className="speech-body">
         <div className="speech-meta">

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID, uuid4
@@ -451,37 +451,61 @@ class DebateService:
         provider: ProviderMode | None = None,
     ) -> tuple[SessionView, list[DebateEvent]]:
         """Run the debate to a terminal state; return (final view, events)."""
-        request_id = bind_request_id()
         events: list[DebateEvent] = []
+        views: list[SessionView] = []
+        for view, event in self.stream_debate(session_id, provider=provider):
+            views.append(view)
+            events.append(event)
+        if not views:  # pragma: no cover - stream_debate always yields a view
+            raise AssertionError("stream_debate produced no view")
+        return views[-1], events
+
+    def stream_debate(
+        self,
+        session_id: UUID,
+        *,
+        provider: ProviderMode | None = None,
+    ) -> Iterable[tuple[SessionView, DebateEvent]]:
+        """Yield one (final-or-interim view, event) per debate step.
+
+        The generator persists each chef message and reports the session view
+        after every step so an SSE endpoint can forward events as they happen,
+        instead of buffering the whole debate and flushing it at the end.
+        """
+        request_id = bind_request_id()
         mode = provider or self._default_provider
 
+        # (1) claim the session as RUNNING
+        with self._session() as db:
+            row = self._fetch_row(db, session_id)
+            if row is None:
+                raise SessionNotFound(session_id)
+            if row.status != SessionStatus.PENDING.value:
+                # Re-entry / already finalised: return current stored state.
+                view = row_to_domain(row)
+                yield view, status_event(session_id, SessionStatus(row.status))
+                return
+            prefs = self._read_preferences(db, row)
+            row.status = SessionStatus.RUNNING.value
+            db.commit()
+
+        yield (
+            self.get_session(session_id),
+            status_event(session_id, SessionStatus.RUNNING),
+        )
+        provider_obj = self._build_provider(mode)
+
         try:
-            # (1) claim the session as RUNNING
-            with self._session() as db:
-                row = self._fetch_row(db, session_id)
-                if row is None:
-                    raise SessionNotFound(session_id)
-                if row.status != SessionStatus.PENDING.value:
-                    # Re-entry / already finalised: return current stored state.
-                    return row_to_domain(row), [
-                        status_event(session_id, SessionStatus(row.status))
-                    ]
-                prefs = self._read_preferences(db, row)
-                row.status = SessionStatus.RUNNING.value
-                db.commit()
-
-            events.append(status_event(session_id, SessionStatus.RUNNING))
-            provider_obj = self._build_provider(mode)
-
             # (2) three rounds x two chefs, persisted one message at a time
             previous: str | None = None
             for round_number in range(1, ROUNDS + 1):
                 for agent in (AgentName.SICHUAN_SPICY, AgentName.CANTONESE_WELLNESS):
-                    events.append(
+                    yield (
+                        self.get_session(session_id),
                         DebateEvent(
                             "round_started",
                             {"round": round_number, "agent": agent.value},
-                        )
+                        ),
                     )
                     ctx = DebateContext(
                         preferences=prefs,
@@ -494,7 +518,9 @@ class DebateService:
                         ctx, session_id=session_id, request_id=request_id
                     )
                     self._append_message(session_id, message)
-                    events.append(
+                    view = self.get_session(session_id)
+                    yield (
+                        view,
                         DebateEvent(
                             "message",
                             {
@@ -503,13 +529,16 @@ class DebateService:
                                 "argument": message.argument,
                                 "evidence": message.evidence,
                             },
-                        )
+                        ),
                     )
                     previous = f"{message.agent.value}: {message.argument}"
 
             # (3) validate (all six messages present) then judge
             self._set_status(session_id, SessionStatus.VALIDATING)
-            events.append(status_event(session_id, SessionStatus.VALIDATING))
+            yield (
+                self.get_session(session_id),
+                status_event(session_id, SessionStatus.VALIDATING),
+            )
 
             transcript = self._build_transcript(session_id)
             report = provider_obj.report(
@@ -534,14 +563,15 @@ class DebateService:
                 row.failure_reason = None
                 db.commit()
 
-            events.append(
+            view = self.get_session(session_id)
+            yield (
+                view,
                 DebateEvent(
                     "report",
                     {"session_id": str(session_id), "report": report.model_dump()},
-                )
+                ),
             )
-            events.append(status_event(session_id, SessionStatus.SUCCESS))
-            return self.get_session(session_id), events
+            yield view, status_event(session_id, SessionStatus.SUCCESS)
 
         except SessionNotFound:
             raise
@@ -565,8 +595,8 @@ class DebateService:
                     row.status = SessionStatus.FAILED.value
                     row.failure_reason = reason
                     db.commit()
-            events.append(status_event(session_id, SessionStatus.FAILED))
-            return self.get_session(session_id), events
+            view = self.get_session(session_id)
+            yield view, status_event(session_id, SessionStatus.FAILED)
 
     def get_session(self, session_id: UUID) -> SessionView:
         with self._session() as db:
