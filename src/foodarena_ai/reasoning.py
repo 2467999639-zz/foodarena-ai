@@ -1,13 +1,9 @@
-"""Deterministic mock reasoning and score normalisation.
+"""Deterministic mock reasoning over the demo menu.
 
-Two responsibilities:
-
-1. ``MockReasoner`` scores every dish in :data:`domain.MENU` against the user
-   preferences and returns grounded picks without any model call. This powers
-   the ``mock`` provider path (deterministic, offline, CI-safe) and the demo
-   data in ``eval/``.
-2. Bounding helpers used when the real judge output needs to be aligned to the
-   same 0..5 scale the UI displays.
+``MockReasoner`` scores every dish in :data:`domain.MENU` against the user
+preferences with explainable rules and returns grounded picks without any
+model call. This powers the ``mock`` provider path (deterministic, offline,
+CI-safe) and the demo data in ``eval/``.
 """
 
 from __future__ import annotations

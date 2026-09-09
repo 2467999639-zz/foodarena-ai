@@ -1,0 +1,43 @@
+# FoodArena AI: one-command local stack.
+#
+#   docker compose up --build
+#
+# Brings up the API (backend) plus a built frontend image served on :3000.
+# The backend persists its SQLite volume under ./data. Set FOODARENA_PROVIDER
+# to real and provide SILICONFLOW_API_KEY to use the live model instead of the
+# deterministic mock.
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      FOODARENA_DATABASE_URL: sqlite:////data/foodarena.db
+      FOODARENA_PROVIDER: ${FOODARENA_PROVIDER:-mock}
+      SILICONFLOW_BASE_URL: ${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
+      SILICONFLOW_MODEL: ${SILICONFLOW_MODEL:-deepseek-ai/DeepSeek-V4-Flash}
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
+    volumes:
+      - foodarena-data:/data
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    depends_on:
+      - backend
+    ports:
+      - "3000:80"
+    environment:
+      # Nginx proxies /api to the backend service on the compose network.
+      VITE_API_BASE_URL: ""
+
+volumes:
+  foodarena-data:
