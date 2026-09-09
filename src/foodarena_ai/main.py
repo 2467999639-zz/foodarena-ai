@@ -33,7 +33,7 @@ from .domain import (
     SessionSummary,
     SessionView,
 )
-from .security import RequestFilter
+from .security import StructuredFormatter
 from .service import DebateService, SessionNotFound
 
 LOGGER = logging.getLogger(__name__)
@@ -54,11 +54,16 @@ def get_service() -> DebateService:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s request=%(request_id)s %(message)s",
+    handler = logging.StreamHandler()
+    handler.setFormatter(
+        StructuredFormatter(
+            "%(asctime)s %(levelname)s %(name)s "
+            "request=%(request_id)s session=%(session_id)s round=%(round)s %(message)s"
+        )
     )
-    logging.getLogger().addFilter(RequestFilter())
+    root = logging.getLogger()
+    root.handlers[:] = [handler]
+    root.setLevel(logging.INFO)
     yield
 
 

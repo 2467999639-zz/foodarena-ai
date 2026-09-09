@@ -90,3 +90,20 @@ class RequestFilter(logging.Filter):
         record.session_id = getattr(record, "session_id", None)
         record.round = getattr(record, "round", None)
         return True
+
+
+class StructuredFormatter(logging.Formatter):
+    """Format records that may not carry the trace attributes.
+
+    Third-party loggers (httpx, uvicorn, …) emit records that never pass
+    through :class:`RequestFilter`, so the formatter substitutes a default
+    rather than raising ``KeyError`` on a missing ``request_id``.
+    """
+
+    DEFAULTS = {"request_id": "-", "session_id": "-", "round": "-"}
+
+    def format(self, record: logging.LogRecord) -> str:
+        for key, default in self.DEFAULTS.items():
+            if not hasattr(record, key):
+                setattr(record, key, default)
+        return super().format(record)
