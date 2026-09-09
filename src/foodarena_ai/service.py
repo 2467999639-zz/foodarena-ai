@@ -1,9 +1,15 @@
-"""Debate orchestration: create sessions, run three rounds, judge the result.
+"""Debate orchestration: create sessions, run rounds, judge the result.
 
 Lifecycle owned here: ``PENDING -> RUNNING -> VALIDATING -> SUCCESS`` (or
 ``FAILED`` on any provider/schema failure). Messages and the final report are
 persisted transactionally and an ordered event list is returned so the SSE
 endpoint can stream live and replay from storage afterwards.
+
+Each debate can carry per-chef personas (:class:`PersonaInput`) and termination
+settings (:class:`DebateSettings`). Personas and settings supplied at debate
+start are persisted on the session row so reconnects and replayed events see the
+same cast. Rounds run until ``settings.max_rounds`` unless an early-convergence
+check (both chefs name the same dish) fires at or after ``settings.min_rounds``.
 
 Concurrency note
 ----------------
@@ -17,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
@@ -32,27 +39,53 @@ from .db import (
     RecommendationRow,
     SessionRow,
     create_all,
+    decode_personas,
+    decode_settings,
+    encode_personas,
+    encode_settings,
+    ensure_session_schema,
     make_engine,
     row_to_domain,
     utc_now,
 )
 from .domain import (
+    BUILTIN_MENU,
     AgentMessage,
     AgentName,
+    AgentSide,
     DebateReport,
+    DebateSettings,
+    MenuCatalog,
+    PersonaInput,
     PreferenceInput,
     ProviderMode,
     SessionStatus,
     SessionView,
     Weather,
+    default_personas,
+    persona_label_map,
+    style_cuisine_lean,
 )
 from .reasoning import MockReasoner
-from .security import bind_request_id, redact_secrets, sanitise_user_text
+from .security import (
+    _USER_INPUT_END,
+    _USER_INPUT_START,
+    bind_request_id,
+    redact_secrets,
+    sanitise_user_text,
+)
 
 LOGGER = logging.getLogger(__name__)
 
 ROUNDS = 3
 _MAX_TEXT_LEN = 200
+
+# The two chefs that can ever speak in a debate (the judge only decides).
+_DEBATE_AGENTS = (AgentName.SICHUAN_SPICY, AgentName.CANTONESE_WELLNESS)
+
+# Control characters removed from free-text persona flavour before prompting.
+_CTRL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_FLAVOUR_MAX_LEN = 200
 
 
 class DebateProviderError(Exception):
@@ -72,6 +105,79 @@ class SessionNotFound(LookupError):
 
 
 # --------------------------------------------------------------------------
+# Persona / settings resolution helpers
+# --------------------------------------------------------------------------
+
+
+def _neutralise_flavour(flavour: str, *, max_length: int = _FLAVOUR_MAX_LEN) -> str:
+    """Keep a persona's free-text ``flavour`` readable but prompt-safe.
+
+    Control characters are removed, over-length text truncated and known
+    injection attempts neutralised (the same rules used for user preferences),
+    then the non-executable delimiters ``sanitise_user_text`` wraps around its
+    input are stripped so the result reads naturally inside a system prompt.
+    """
+    body = sanitise_user_text(flavour or "", max_length=max_length).strip()
+    if body.startswith(_USER_INPUT_START):
+        body = body[len(_USER_INPUT_START) :]
+    if body.endswith(_USER_INPUT_END):
+        body = body[: -len(_USER_INPUT_END)]
+    body = _CTRL_CHARS.sub("", body).strip()
+    return body
+
+
+def resolve_personas(
+    request_personas: list[PersonaInput] | None,
+) -> dict[AgentName, PersonaInput]:
+    """Merge caller-provided chef personas over the built-in defaults.
+
+    Only the two debating chefs are honoured; other agents (e.g. ``JUDGE``) are
+    dropped. A missing side falls back to its default persona. ``label`` and
+    ``style`` are taken verbatim (the label is bounded 1..20 by Pydantic);
+    ``flavour`` is truncated and neutralised so it cannot inject instructions.
+    """
+    personas = default_personas()
+    if not request_personas:
+        return personas
+    for persona in request_personas:
+        agent = persona.agent
+        if agent not in personas:
+            continue
+        personas[agent] = PersonaInput(
+            agent=agent,
+            label=persona.label,
+            style=persona.style,
+            flavour=_neutralise_flavour(persona.flavour),
+        )
+    return personas
+
+
+def resolve_settings(settings: DebateSettings | dict | None) -> DebateSettings:
+    """Coerce/validate termination settings (defaults when ``None``)."""
+    if settings is None:
+        return DebateSettings()
+    if isinstance(settings, DebateSettings):
+        return settings
+    return DebateSettings.model_validate(settings)
+
+
+def _shared_dish_token(*, text_a: str, text_b: str, menu: MenuCatalog) -> str | None:
+    """Return the menu dish named by BOTH latest chef arguments, else ``None``.
+
+    This is the convergence signal: when both chefs independently cite the same
+    concrete dish, their stances have effectively converged and further rounds
+    add little. A plain "第 N 轮观点"-style utterance never contains a menu
+    name, so generic mock/empty text never triggers an early stop.
+    """
+    for item in menu.items:
+        if not item.name:
+            continue
+        if item.name in text_a and item.name in text_b:
+            return item.name
+    return None
+
+
+# --------------------------------------------------------------------------
 # Debate context & provider interface
 # --------------------------------------------------------------------------
 
@@ -85,6 +191,8 @@ class DebateContext:
     round_number: int
     agent: AgentName
     previous_argument: str | None
+    persona: PersonaInput | None = None
+    max_rounds: int = ROUNDS
 
 
 class ChefProvider:
@@ -120,7 +228,9 @@ class SiliconFlowChefProvider(ChefProvider):
 
     ``client`` owns bounded retries/backoff/timeout. ``call(prompt, system)``
     returns the raw assistant text; it is injectable so parsing and schema
-    repair can be tested offline.
+    repair can be tested offline. A resolved ``persona`` on the context overrides
+    the built-in prompt/label; without one the stock SICHUAN/CANTONESE prompts
+    and labels are used.
     """
 
     _SYSTEM = {
@@ -169,6 +279,19 @@ class SiliconFlowChefProvider(ChefProvider):
             raise DebateProviderError("model returned an empty response")
         return content
 
+    def _persona_for(self, ctx: DebateContext) -> tuple[str, str]:
+        """Resolve ``(label, system_prompt)`` honouring a custom persona."""
+        persona = ctx.persona
+        if persona is not None:
+            label = persona.label
+            system = prompts.persona_system_prompt(
+                label=persona.label,
+                style=persona.style.value,
+                flavour=persona.flavour,
+            )
+            return label, system
+        return self._LABEL[ctx.agent], self._SYSTEM[ctx.agent]
+
     def argument(
         self,
         ctx: DebateContext,
@@ -176,9 +299,12 @@ class SiliconFlowChefProvider(ChefProvider):
         session_id: UUID,
         request_id: str,
     ) -> AgentMessage:
+        label, system_prompt = self._persona_for(ctx)
         user_prompt = prompts.debate_user_prompt(
-            agent_side=self._LABEL[ctx.agent],
+            agent_side=label,
+            label=label,
             round_number=ctx.round_number,
+            max_rounds=ctx.max_rounds,
             taste=ctx.preferences.taste,
             budget_yuan=ctx.preferences.budget_yuan,
             weather=ctx.preferences.weather.value,
@@ -187,7 +313,7 @@ class SiliconFlowChefProvider(ChefProvider):
             previous_turn=ctx.previous_argument,
         )
         raw = self._raw_output(
-            system_prompt=self._SYSTEM[ctx.agent],
+            system_prompt=system_prompt,
             user_prompt=user_prompt,
             session_id=session_id,
             request_id=request_id,
@@ -285,7 +411,16 @@ def normalise_scores(breakdown: dict[str, Any]) -> dict[str, float]:
 
 
 class MockChefProvider(ChefProvider):
-    """Deterministic chef + judge over the demo menu; no network required."""
+    """Deterministic chef + judge over a menu catalog; no network required.
+
+    Each chef argues for the best dish of the cuisine their resolved persona
+    ``style`` leans to (via :func:`domain.style_cuisine_lean`), rather than a
+    hard-coded SICHUAN/CANTONESE split, so a custom light-food persona on either
+    seat reasons over the matching dishes.
+    """
+
+    def __init__(self, menu: MenuCatalog = BUILTIN_MENU) -> None:
+        self._menu = menu
 
     def argument(
         self,
@@ -295,10 +430,9 @@ class MockChefProvider(ChefProvider):
         request_id: str,
     ) -> AgentMessage:
         del session_id, request_id
-        side = _agent_side(ctx.agent)
-        reasoner = MockReasoner(ctx.preferences)
+        side, label = self._side_and_label(ctx)
+        reasoner = MockReasoner(ctx.preferences, menu=self._menu)
         dish = reasoner.best_for_side(side, limit=1)[0]
-        label = "川辣派" if side.value == "sichuan" else "粤式养生派"
         argument = (
             f"第 {ctx.round_number} 轮 · {label} 立场：推荐「{dish.item.name}」"
             f"（¥{dish.item.price_yuan}）。{_human_reasons(dish.reasons)}。"
@@ -316,6 +450,15 @@ class MockChefProvider(ChefProvider):
             evidence=evidence,
         )
 
+    def _side_and_label(self, ctx: DebateContext) -> tuple[AgentSide, str]:
+        persona = ctx.persona
+        if persona is not None:
+            side = style_cuisine_lean(persona.style)
+            return side, persona.label
+        side = _agent_side(ctx.agent)
+        label = "川辣派" if side is AgentSide.SICHUAN else "粤式养生派"
+        return side, label
+
     def report(
         self,
         *,
@@ -325,7 +468,7 @@ class MockChefProvider(ChefProvider):
         request_id: str,
     ) -> DebateReport:
         del transcript, session_id, request_id
-        reasoner = MockReasoner(preferences)
+        reasoner = MockReasoner(preferences, menu=self._menu)
         best = reasoner.best_overall(limit=1)[0]
         runner_up = reasoner.best_overall(limit=2)
         fallback = runner_up[1] if len(runner_up) > 1 else None
@@ -348,9 +491,7 @@ class MockChefProvider(ChefProvider):
         )
 
 
-def _agent_side(agent: AgentName):
-    from .domain import AgentSide
-
+def _agent_side(agent: AgentName) -> AgentSide:
     return (
         AgentSide.SICHUAN if agent is AgentName.SICHUAN_SPICY else AgentSide.CANTONESE
     )
@@ -396,6 +537,10 @@ def status_event(session_id: UUID, status: SessionStatus) -> DebateEvent:
     )
 
 
+def info_event(session_id: UUID, message: str) -> DebateEvent:
+    return DebateEvent("info", {"session_id": str(session_id), "message": message})
+
+
 # --------------------------------------------------------------------------
 # Orchestrator
 # --------------------------------------------------------------------------
@@ -410,25 +555,47 @@ class DebateService:
         *,
         in_memory: bool = False,
         default_provider: ProviderMode = ProviderMode.MOCK,
+        menu: MenuCatalog = BUILTIN_MENU,
     ) -> None:
         self._engine = make_engine(database_url, in_memory=in_memory)
         create_all(self._engine)
+        ensure_session_schema(self._engine)
         self._default_provider = default_provider
+        self._menu = menu
 
     # -- public API ---------------------------------------------------------
+    @property
+    def menu(self) -> MenuCatalog:
+        """Validated catalog used by this service instance."""
+        return self._menu
+
     def create_session(
         self,
         preferences: PreferenceInput,
         *,
         provider: ProviderMode | None = None,
+        personas: list[PersonaInput] | None = None,
+        settings: DebateSettings | None = None,
     ) -> SessionView:
         session_id = uuid4()
         mode = (provider or self._default_provider).value
+        personas_json = (
+            encode_personas(resolve_personas(personas))
+            if personas is not None
+            else None
+        )
+        settings_json = (
+            encode_settings(resolve_settings(settings))
+            if settings is not None
+            else None
+        )
         with self._session() as db:
             row = SessionRow(
                 session_id=str(session_id),
                 status=SessionStatus.PENDING.value,
                 provider=mode,
+                personas_json=personas_json,
+                settings_json=settings_json,
             )
             db.add(row)
             db.flush()
@@ -449,11 +616,15 @@ class DebateService:
         session_id: UUID,
         *,
         provider: ProviderMode | None = None,
+        personas: list[PersonaInput] | None = None,
+        settings: DebateSettings | None = None,
     ) -> tuple[SessionView, list[DebateEvent]]:
         """Run the debate to a terminal state; return (final view, events)."""
         events: list[DebateEvent] = []
         views: list[SessionView] = []
-        for view, event in self.stream_debate(session_id, provider=provider):
+        for view, event in self.stream_debate(
+            session_id, provider=provider, personas=personas, settings=settings
+        ):
             views.append(view)
             events.append(event)
         if not views:  # pragma: no cover - stream_debate always yields a view
@@ -465,6 +636,8 @@ class DebateService:
         session_id: UUID,
         *,
         provider: ProviderMode | None = None,
+        personas: list[PersonaInput] | None = None,
+        settings: DebateSettings | None = None,
     ) -> Iterable[tuple[SessionView, DebateEvent]]:
         """Yield one (final-or-interim view, event) per debate step.
 
@@ -475,7 +648,7 @@ class DebateService:
         request_id = bind_request_id()
         mode = provider or self._default_provider
 
-        # (1) claim the session as RUNNING
+        # (1) claim the session as RUNNING (personas/settings settle here)
         with self._session() as db:
             row = self._fetch_row(db, session_id)
             if row is None:
@@ -486,6 +659,18 @@ class DebateService:
                 yield view, status_event(session_id, SessionStatus(row.status))
                 return
             prefs = self._read_preferences(db, row)
+            if personas is not None:
+                resolved_personas = resolve_personas(personas)
+                row.personas_json = encode_personas(resolved_personas)
+            else:
+                resolved_personas = decode_personas(row.personas_json)
+            if settings is not None:
+                resolved_settings = resolve_settings(settings)
+                row.settings_json = encode_settings(resolved_settings)
+            else:
+                resolved_settings = (
+                    decode_settings(row.settings_json) or DebateSettings()
+                )
             row.status = SessionStatus.RUNNING.value
             db.commit()
 
@@ -495,11 +680,19 @@ class DebateService:
         )
         provider_obj = self._build_provider(mode)
 
+        max_rounds = resolved_settings.max_rounds
+        min_rounds = resolved_settings.min_rounds
+        early_stop = resolved_settings.early_stop
+
         try:
-            # (2) three rounds x two chefs, persisted one message at a time
+            # (2) up to max_rounds x two chefs, persisted one message at a time;
+            # stop early when both chefs have converged on a concrete dish.
             previous: str | None = None
-            for round_number in range(1, ROUNDS + 1):
-                for agent in (AgentName.SICHUAN_SPICY, AgentName.CANTONESE_WELLNESS):
+            latest_arguments: dict[AgentName, str] = {}
+            ended_early = False
+            round_number = 1
+            while round_number <= max_rounds:
+                for agent in _DEBATE_AGENTS:
                     yield (
                         self.get_session(session_id),
                         DebateEvent(
@@ -513,11 +706,14 @@ class DebateService:
                         round_number=round_number,
                         agent=agent,
                         previous_argument=previous,
+                        persona=resolved_personas[agent],
+                        max_rounds=max_rounds,
                     )
                     message = provider_obj.argument(
                         ctx, session_id=session_id, request_id=request_id
                     )
                     self._append_message(session_id, message)
+                    latest_arguments[agent] = message.argument
                     view = self.get_session(session_id)
                     yield (
                         view,
@@ -533,12 +729,35 @@ class DebateService:
                     )
                     previous = f"{message.agent.value}: {message.argument}"
 
-            # (3) validate (all six messages present) then judge
+                # End of a full round: both chefs have spoken.
+                if (
+                    early_stop
+                    and round_number >= min_rounds
+                    and _shared_dish_token(
+                        text_a=latest_arguments.get(AgentName.SICHUAN_SPICY, ""),
+                        text_b=latest_arguments.get(AgentName.CANTONESE_WELLNESS, ""),
+                        menu=self._menu,
+                    )
+                    is not None
+                ):
+                    ended_early = True
+                    break
+                round_number += 1
+
+            # (3) validate (messages present) then judge — judge is round-agnostic
             self._set_status(session_id, SessionStatus.VALIDATING)
             yield (
                 self.get_session(session_id),
                 status_event(session_id, SessionStatus.VALIDATING),
             )
+            if ended_early:
+                yield (
+                    self.get_session(session_id),
+                    info_event(
+                        session_id,
+                        f"双方已在第 {round_number} 轮达成一致，提前终结",
+                    ),
+                )
 
             transcript = self._build_transcript(session_id)
             report = provider_obj.report(
@@ -683,14 +902,11 @@ class DebateService:
             db.commit()
 
     def _build_transcript(self, session_id: UUID) -> str:
-        """Return a readable six-line transcript for the judge prompt."""
+        """Return a readable transcript for the judge prompt."""
         with self._session() as db:
             row = self._fetch_row(db, session_id)
             messages = list(row.messages)
-        labels = {
-            AgentName.SICHUAN_SPICY.value: "川辣派",
-            AgentName.CANTONESE_WELLNESS.value: "粤式养生派",
-        }
+            labels = persona_label_map(decode_personas(row.personas_json))
         lines = [
             (
                 f"第{m.round}轮 {labels.get(m.agent, m.agent)}：{m.argument}"
@@ -705,4 +921,4 @@ class DebateService:
             from .providers import build_real_provider
 
             return build_real_provider()
-        return MockChefProvider()
+        return MockChefProvider(menu=self._menu)

@@ -44,6 +44,53 @@ export interface SessionView {
   messages: AgentMessage[];
   report: DebateReport | null;
   failure_reason: string | null;
+  personas?: Record<string, string>;
+}
+
+export type PersonaStyle =
+  | 'sichuan'
+  | 'cantonese'
+  | 'northwestern'
+  | 'japanese'
+  | 'light_food'
+  | 'heavy_food';
+
+export interface PersonaInput {
+  agent: AgentName;
+  label: string;
+  style: PersonaStyle;
+  flavour: string;
+}
+
+export interface DebateSettings {
+  min_rounds: number;
+  max_rounds: number;
+  early_stop: boolean;
+}
+
+export interface DebateStartRequest {
+  provider?: 'mock' | 'real';
+  personas?: PersonaInput[];
+  settings?: DebateSettings;
+}
+
+export interface MenuItemView {
+  name: string;
+  cuisine: Cuisine;
+  price_yuan: number;
+  spice_level: number;
+  rich_level: number;
+  heat_rating: number;
+  prep_minutes: number;
+  vegetarian: boolean;
+  tags: string[];
+  source: 'canteen' | 'takeaway' | 'sample';
+  delivery_only: boolean;
+}
+
+export interface MenuCatalogView {
+  source_label: string;
+  items: MenuItemView[];
 }
 
 export interface PreferenceInput {
@@ -84,3 +131,18 @@ export const STATUS_LABELS: Record<SessionStatus, string> = {
   SUCCESS: '已完成',
   FAILED: '失败',
 };
+
+export const STYLE_LABELS: Record<PersonaStyle, string> = {
+  sichuan: '川味 · 麻辣鲜香',
+  cantonese: '粤式 · 汤水清淡',
+  northwestern: '西北 · 豪迈碳水',
+  japanese: '日式 · 营养均衡',
+  light_food: '轻食 · 低卡清爽',
+  heavy_food: '硬核 · 重油重味',
+};
+
+export const SOURCE_LABELS = {
+  canteen: '食堂',
+  takeaway: '外卖',
+  sample: '样例',
+} as const;

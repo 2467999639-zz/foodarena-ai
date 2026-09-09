@@ -13,6 +13,8 @@ export interface LiveState {
   messages: AgentMessage[];
   report: DebateReport | null;
   failureReason: string | null;
+  personas: Record<string, string>;
+  notice: string | null;
 }
 
 const initial: LiveState = {
@@ -21,6 +23,8 @@ const initial: LiveState = {
   messages: [],
   report: null,
   failureReason: null,
+  personas: {},
+  notice: null,
 };
 
 function terminal(status: SessionStatus): boolean {
@@ -37,6 +41,8 @@ function fromView(view: SessionView): LiveState {
     messages: view.messages,
     report: view.report,
     failureReason: view.failure_reason,
+    personas: view.personas ?? {},
+    notice: null,
   };
 }
 
@@ -131,6 +137,16 @@ export function useLiveSession(sessionId: string | null, enabled: boolean) {
         try {
           const { report } = JSON.parse(raw.data) as { report: DebateReport };
           setState((prev) => ({ ...prev, report }));
+        } catch {
+          /* ignore */
+        }
+      });
+
+      source.addEventListener('info', (raw: MessageEvent) => {
+        if (cancelled) return;
+        try {
+          const { message } = JSON.parse(raw.data) as { message: string };
+          setState((prev) => ({ ...prev, notice: message }));
         } catch {
           /* ignore */
         }

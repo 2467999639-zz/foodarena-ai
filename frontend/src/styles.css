@@ -254,6 +254,12 @@ body {
   border: 1px solid #f0c4bb;
 }
 
+.banner.info {
+  background: #fff7e6;
+  color: #8a5a00;
+  border: 1px solid #f0dfb8;
+}
+
 /* Status badge */
 .status-badge {
   display: inline-flex;
@@ -542,3 +548,101 @@ body {
     margin-left: 0;
   }
 }
+
+/* ---- Extended preference form: menu strip / persona / settings ---- */
+.menu-source {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--cantonese);
+  background: var(--cantonese-bg);
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+
+.menu-strip {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 12px;
+}
+
+.menu-strip summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.menu-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.menu-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 3px 2px;
+}
+
+.menu-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.menu-price {
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.switch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.persona-panel {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: #fdfbf7;
+}
+
+.panel-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--muted);
+}
+
+.persona-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--card);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.persona-panel .input {
+  background: #fff;
+}
+
+.persona-panel select.input {
+  font-weight: 400;
+}
+

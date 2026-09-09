@@ -28,11 +28,13 @@ from .config import settings
 from .domain import (
     DebateStartRequest,
     ErrorResponse,
-    PreferenceInput,
+    MenuCatalog,
+    SessionCreateRequest,
     SessionStatus,
     SessionSummary,
     SessionView,
 )
+from .menu_store import load_menu
 from .security import StructuredFormatter
 from .service import DebateService, SessionNotFound
 
@@ -48,6 +50,7 @@ def get_service() -> DebateService:
         _service = DebateService(
             database_url=settings.database_url,
             default_provider=settings.default_provider,
+            menu=load_menu(),
         )
     return _service
 
@@ -72,6 +75,13 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+
+@app.get("/api/v1/menu", response_model=MenuCatalog)
+def get_menu(service: DebateService = Depends(get_service)) -> MenuCatalog:
+    """Return the validated menu currently used for recommendations."""
+    return service.menu
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -98,10 +108,13 @@ def _missing_session(exc: SessionNotFound) -> HTTPException:
     status_code=201,
 )
 def create_session(
-    payload: PreferenceInput,
+    payload: SessionCreateRequest,
     service: DebateService = Depends(get_service),
 ) -> SessionSummary:
-    view = service.create_session(payload)
+    preferences, personas, settings = payload.resolved()
+    view = service.create_session(
+        preferences, personas=personas or None, settings=settings
+    )
     return SessionSummary(session_id=view.session_id, status=view.status)
 
 
@@ -112,9 +125,13 @@ def run_debate(
     service: DebateService = Depends(get_service),
 ) -> SessionView:
     """Run the debate (idempotent re-entry returns current state)."""
+    personas = payload.personas if payload is not None else None
+    settings = payload.settings if payload is not None else None
     provider = payload.provider if payload is not None else None
     try:
-        view, _events = service.run_debate(session_id, provider=provider)
+        view, _events = service.run_debate(
+            session_id, provider=provider, personas=personas, settings=settings
+        )
     except SessionNotFound as exc:
         raise _missing_session(exc) from exc
     return view

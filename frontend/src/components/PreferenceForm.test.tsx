@@ -40,9 +40,31 @@ describe('PreferenceForm', () => {
     fireEvent.click(screen.getByText('开始辩论 🔥'));
 
     expect(onSubmit).toHaveBeenCalledTimes(1);
-    const prefs = onSubmit.mock.calls[0][0];
-    expect(prefs.taste).toBe('清淡');
-    expect(prefs.budget_yuan).toBe(15);
-    expect(prefs.companions).toBe(1);
+    const submit = onSubmit.mock.calls[0][0];
+    expect(submit.preferences.taste).toBe('清淡');
+    expect(submit.preferences.budget_yuan).toBe(15);
+    expect(submit.preferences.companions).toBe(1);
+    // Custom persona/settings stay off unless the user opts in.
+    expect(submit.personas).toBeUndefined();
+    expect(submit.settings).toBeUndefined();
+  });
+
+  it('includes custom personas and settings when enabled', () => {
+    const { onSubmit } = renderForm();
+
+    fireEvent.change(screen.getByPlaceholderText('例如：麻辣 / 清淡 / 酸甜'), {
+      target: { value: '麻辣' },
+    });
+    fireEvent.click(screen.getByText('自定义大厨性格与辩论规则'));
+
+    const submit = () => fireEvent.click(screen.getByText('开始辩论 🔥'));
+    submit();
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const call = onSubmit.mock.calls[0][0];
+    expect(call.personas).toHaveLength(2);
+    expect(call.personas[0].agent).toBe('sichuan_spicy');
+    expect(call.settings?.early_stop).toBe(true);
+    expect(call.settings?.min_rounds).toBe(2);
   });
 });

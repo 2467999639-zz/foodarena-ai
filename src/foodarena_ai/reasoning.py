@@ -1,9 +1,9 @@
-"""Deterministic mock reasoning over the demo menu.
+"""Deterministic mock reasoning over a menu catalog.
 
-``MockReasoner`` scores every dish in :data:`domain.MENU` against the user
-preferences with explainable rules and returns grounded picks without any
-model call. This powers the ``mock`` provider path (deterministic, offline,
-CI-safe) and the demo data in ``eval/``.
+``MockReasoner`` scores every dish in the supplied catalog (built-in synthetic
+menu or a loaded real-menu file) against the user preferences with explainable
+rules and returns grounded picks without any model call. This powers the
+``mock`` provider path (deterministic, offline, CI-safe).
 """
 
 from __future__ import annotations
@@ -11,8 +11,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .domain import (
-    MENU,
+    BUILTIN_MENU,
     AgentSide,
+    MenuCatalog,
     MenuItem,
     PreferenceInput,
     Weather,
@@ -31,7 +32,7 @@ class ScoredDish:
 
 
 class MockReasoner:
-    """Score the demo menu against preferences with explainable rules."""
+    """Score a menu against preferences with explainable rules."""
 
     # How closely each menu cuisine matches a declared taste. Unknown tastes
     # default to a neutral mapping so both sides stay competitive.
@@ -47,8 +48,18 @@ class MockReasoner:
     _NEUTRAL = {AgentSide.SICHUAN: 0.55, AgentSide.CANTONESE: 0.6}
     _PRICE_TOLERANCE = 0.2  # generous-ish: up to +20% over budget still scored
 
-    def __init__(self, preferences: PreferenceInput) -> None:
+    def __init__(
+        self,
+        preferences: PreferenceInput,
+        *,
+        menu: MenuCatalog = BUILTIN_MENU,
+    ) -> None:
         self._prefs = preferences
+        self._menu = menu
+
+    @property
+    def items(self) -> list[MenuItem]:
+        return [item for item in self._menu.items if item.available]
 
     def top_cuisines(self) -> list[AgentSide]:
         """Return the two sides ordered by taste fit for this user."""
@@ -67,7 +78,7 @@ class MockReasoner:
 
     def best_for_side(self, side: AgentSide, limit: int = 1) -> list[ScoredDish]:
         """Highest-scoring affordable-ish dishes for one side."""
-        scored = [self._score(item) for item in MENU if item.cuisine is side]
+        scored = [self._score(item) for item in self.items if item.cuisine is side]
         affordable = [s for s in scored if s.item.price_yuan <= self._prefs.budget_yuan]
         candidates = affordable or scored  # soft cap: allow slight overruns
         ranked = sorted(candidates, key=lambda s: s.score, reverse=True)
@@ -77,7 +88,7 @@ class MockReasoner:
         """Highest-scoring dishes across the whole menu."""
         candidates = [
             s
-            for s in (self._score(item) for item in MENU)
+            for s in (self._score(item) for item in self.items)
             if s.item.price_yuan <= self._prefs.budget_yuan
         ]
         ranked = sorted(candidates, key=lambda s: s.score, reverse=True)

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { createSession, fetchReport } from './api';
+import { createSession, fetchMenu, fetchReport } from './api';
 import { DebateView } from './components/DebateView';
 import { PreferenceForm } from './components/PreferenceForm';
+import type { FormSubmit } from './components/PreferenceForm';
 import { ReportView } from './components/ReportView';
-import type { DebateReport, PreferenceInput } from './types';
+import type { DebateReport, MenuCatalogView } from './types';
 import { useLiveSession } from './useLiveSession';
 
 type Route =
@@ -42,6 +43,19 @@ export default function App() {
   const route = useHashRoute();
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [menu, setMenu] = useState<MenuCatalogView | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    if (route.page === 'home') {
+      fetchMenu()
+        .then((m) => alive && setMenu(m))
+        .catch(() => alive && setMenu(null));
+    }
+    return () => {
+      alive = false;
+    };
+  }, [route.page]);
 
   // A pending create means we are about to own a session; once created we jump
   // to the debate route for that id. Survives reload via sessionStorage.
@@ -55,11 +69,16 @@ export default function App() {
     }
   }, [createdId]);
 
-  const handleSubmit = useCallback(async (prefs: PreferenceInput) => {
+  const handleSubmit = useCallback(async (submit: FormSubmit) => {
     setCreating(true);
     setCreateError(null);
     try {
-      const summary = await createSession(prefs);
+      const summary = await createSession(
+        submit.preferences,
+        submit.personas || submit.settings
+          ? { personas: submit.personas, settings: submit.settings }
+          : undefined,
+      );
       setCreatedId(summary.session_id);
     } catch (err) {
       setCreateError(String(err));
@@ -98,7 +117,7 @@ export default function App() {
   return (
     <Shell onHome={startAgain}>
       <div className="hero">
-        <PreferenceForm onSubmit={handleSubmit} submitting={creating} />
+        <PreferenceForm onSubmit={handleSubmit} submitting={creating} menu={menu} />
         {createError && <p className="banner error">⚠️ {createError}</p>}
       </div>
     </Shell>

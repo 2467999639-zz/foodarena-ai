@@ -26,7 +26,10 @@ function badgeClass(status: SessionStatus): string {
 }
 
 export function DebateView({ state, sessionId, onRetry, onStartAgain }: Props) {
-  const { status, currentRound, messages, report } = state;
+  const { status, currentRound, messages, report, personas, notice } = state;
+
+  const labelFor = (agent: AgentName) =>
+    personas[agent] || AGENT_LABELS[agent];
 
   const grouped: Record<number, AgentMessage[]> = {};
   for (const message of messages) {
@@ -47,6 +50,8 @@ export function DebateView({ state, sessionId, onRetry, onStartAgain }: Props) {
           {busy && '…'}
         </span>
       </header>
+
+      {notice && <p className="banner info">ℹ️ {notice}</p>}
 
       {status === 'PENDING' && (
         <div className="card centered empty-state">
@@ -78,6 +83,7 @@ export function DebateView({ state, sessionId, onRetry, onStartAgain }: Props) {
                   <SpeechCard
                     key={`${message.agent}-${message.round}`}
                     message={message}
+                    labelFor={labelFor}
                   />
                 ))
               )}
@@ -138,14 +144,20 @@ export function DebateView({ state, sessionId, onRetry, onStartAgain }: Props) {
   );
 }
 
-function SpeechCard({ message }: { message: AgentMessage }) {
+function SpeechCard({
+  message,
+  labelFor,
+}: {
+  message: AgentMessage;
+  labelFor: (agent: AgentName) => string;
+}) {
   const agent = message.agent;
   return (
     <article className={`speech ${agentSide(agent)}`}>
       <div className="speech-avatar">{AGENT_EMOJI[agent]}</div>
       <div className="speech-body">
         <div className="speech-meta">
-          <strong>{AGENT_LABELS[agent]}</strong>
+          <strong>{labelFor(agent)}</strong>
           <span className="tag">第 {message.round} 轮</span>
         </div>
         <p className="speech-argument">{message.argument}</p>
