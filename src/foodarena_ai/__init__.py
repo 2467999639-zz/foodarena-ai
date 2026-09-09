@@ -11,6 +11,13 @@ from .debate import (
     MockDebateAgent,
     SessionStatus,
 )
+from .domain import (
+    DebateReport,
+    PreferenceInput,
+    ProviderMode,
+    SessionView,
+    Weather,
+)
 from .siliconflow import (
     ChatCompletionResponse,
     SiliconFlowClient,
@@ -28,12 +35,17 @@ __all__ = [
     "DebateAgent",
     "DebateController",
     "DebateControllerError",
+    "DebateReport",
     "DebateSession",
     "MockDebateAgent",
+    "PreferenceInput",
+    "ProviderMode",
     "SessionStatus",
+    "SessionView",
     "SiliconFlowClient",
     "SiliconFlowConfig",
     "SiliconFlowError",
     "SiliconFlowRequestError",
     "SiliconFlowResponseError",
+    "Weather",
 ]

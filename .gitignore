@@ -6,6 +6,9 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+*.db
+node_modules/
+frontend/dist/
 task_plan.md
 findings.md
 progress.md
