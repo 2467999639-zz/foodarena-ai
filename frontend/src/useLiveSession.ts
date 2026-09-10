@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { eventsUrl, fetchSession } from './api';
 import type {
   AgentMessage,
+  AgentName,
   DebateReport,
   SessionStatus,
   SessionView,
@@ -10,6 +11,7 @@ import type {
 export interface LiveState {
   status: SessionStatus;
   currentRound: number | null;
+  activeAgent: AgentName | null;
   messages: AgentMessage[];
   report: DebateReport | null;
   failureReason: string | null;
@@ -20,6 +22,7 @@ export interface LiveState {
 const initial: LiveState = {
   status: 'PENDING',
   currentRound: null,
+  activeAgent: null,
   messages: [],
   report: null,
   failureReason: null,
@@ -32,12 +35,24 @@ function terminal(status: SessionStatus): boolean {
 }
 
 function fromView(view: SessionView): LiveState {
+  const lastMessage = view.messages[view.messages.length - 1];
+  const activeAgent =
+    view.status === 'RUNNING'
+      ? lastMessage?.agent === 'sichuan_spicy'
+        ? 'cantonese_wellness'
+        : 'sichuan_spicy'
+      : null;
+  const currentRound = lastMessage
+    ? lastMessage.agent === 'cantonese_wellness' && view.status === 'RUNNING'
+      ? Math.min(lastMessage.round + 1, 3)
+      : lastMessage.round
+    : view.status === 'RUNNING'
+      ? 1
+      : null;
   return {
     status: view.status,
-    currentRound:
-      view.messages.length > 0
-        ? Math.max(...view.messages.map((m) => m.round))
-        : null,
+    currentRound,
+    activeAgent,
     messages: view.messages,
     report: view.report,
     failureReason: view.failure_reason,
@@ -70,7 +85,7 @@ export function useLiveSession(sessionId: string | null, enabled: boolean) {
     let cancelled = false;
     let source: EventSource | null = null;
     let done = false;
-    let restarted = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
     const restore = async () => {
       try {
@@ -84,6 +99,16 @@ export function useLiveSession(sessionId: string | null, enabled: boolean) {
       }
     };
 
+    const scheduleReconnect = () => {
+      if (cancelled || done || reconnectTimer !== null) return;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        void restore().then(() => {
+          if (!cancelled && !done) startStream();
+        });
+      }, 500);
+    };
+
     const startStream = () => {
       if (cancelled || done) return;
       source = new EventSource(eventsUrl(sessionId));
@@ -92,7 +117,11 @@ export function useLiveSession(sessionId: string | null, enabled: boolean) {
         if (cancelled) return;
         try {
           const { status } = JSON.parse(raw.data) as { status: SessionStatus };
-          setState((prev) => ({ ...prev, status }));
+          setState((prev) => ({
+            ...prev,
+            status,
+            activeAgent: terminal(status) ? null : prev.activeAgent,
+          }));
           if (terminal(status)) done = true;
         } catch {
           /* malformed frame */
@@ -102,8 +131,11 @@ export function useLiveSession(sessionId: string | null, enabled: boolean) {
       source.addEventListener('round_started', (raw: MessageEvent) => {
         if (cancelled) return;
         try {
-          const { round } = JSON.parse(raw.data) as { round: number };
-          setState((prev) => ({ ...prev, currentRound: round }));
+          const { round, agent } = JSON.parse(raw.data) as {
+            round: number;
+            agent: AgentName;
+          };
+          setState((prev) => ({ ...prev, currentRound: round, activeAgent: agent }));
         } catch {
           /* ignore */
         }
@@ -125,6 +157,7 @@ export function useLiveSession(sessionId: string | null, enabled: boolean) {
               ...prev,
               messages: [...prev.messages, msg],
               currentRound: msg.round,
+              activeAgent: null,
             };
           });
         } catch {
@@ -152,20 +185,21 @@ export function useLiveSession(sessionId: string | null, enabled: boolean) {
         }
       });
 
-      source.onerror = () => {
-        // EventSource reconnects automatically; once the server ends the
-        // stream (done) or the session reached a terminal state we stop.
+      source.addEventListener('done', (raw: MessageEvent) => {
         source?.close();
-        if (cancelled) return;
-        if (done) return;
-        if (!restarted) {
-          restarted = true;
-          void restore().then(() => {
-            // If storage shows we are already terminal there is nothing to
-            // replay; otherwise open a fresh stream.
-            if (!cancelled && !done) startStream();
-          });
+        const finalStatus = raw.data as SessionStatus;
+        if (terminal(finalStatus)) {
+          done = true;
+        } else {
+          // Another connection owns a debate that is still RUNNING.  Replay
+          // what is persisted, then reconnect until the terminal event exists.
+          scheduleReconnect();
         }
+      });
+
+      source.onerror = () => {
+        source?.close();
+        scheduleReconnect();
       };
     };
 
@@ -175,6 +209,7 @@ export function useLiveSession(sessionId: string | null, enabled: boolean) {
 
     return () => {
       cancelled = true;
+      if (reconnectTimer !== null) clearTimeout(reconnectTimer);
       source?.close();
     };
   }, [sessionId, enabled]);

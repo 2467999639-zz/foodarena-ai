@@ -26,7 +26,15 @@ function badgeClass(status: SessionStatus): string {
 }
 
 export function DebateView({ state, sessionId, onRetry, onStartAgain }: Props) {
-  const { status, currentRound, messages, report, personas, notice } = state;
+  const {
+    status,
+    currentRound,
+    activeAgent,
+    messages,
+    report,
+    personas,
+    notice,
+  } = state;
 
   const labelFor = (agent: AgentName) =>
     personas[agent] || AGENT_LABELS[agent];
@@ -75,7 +83,7 @@ export function DebateView({ state, sessionId, onRetry, onStartAgain }: Props) {
               {roundMessages.length === 0 ? (
                 <p className="muted placeholder">
                   {thinking || currentRound === null
-                    ? '大厨正在思考…'
+                    ? `${activeAgent ? labelFor(activeAgent) : '大厨'}正在思考…`
                     : '尚未进行到本轮'}
                 </p>
               ) : (
@@ -88,7 +96,9 @@ export function DebateView({ state, sessionId, onRetry, onStartAgain }: Props) {
                 ))
               )}
               {thinking && roundMessages.length === 1 && (
-                <p className="muted placeholder">对方正在回应…</p>
+                <p className="muted placeholder">
+                  {activeAgent ? `${labelFor(activeAgent)}正在回应…` : '对方正在回应…'}
+                </p>
               )}
             </section>
           );

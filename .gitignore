@@ -15,3 +15,10 @@ findings.md
 progress.md
 *.tsbuildinfo
 eval/results.json
+
+# Local defense presentation materials
+/.codex-finalizer/
+/.ppt-work/
+/output/
+/docs/答辩汇报.md
+/基于敏捷方法的AI原生应用开发实践_工程实践指导书大纲.pdf

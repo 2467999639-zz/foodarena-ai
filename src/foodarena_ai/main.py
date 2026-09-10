@@ -23,6 +23,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import iterate_in_threadpool
 
 from .config import settings
 from .domain import (
@@ -172,7 +173,11 @@ async def session_events(
     async def stream():
         if steps is not None:
             view: SessionView | None = None
-            for _view, event in steps:
+            # Provider calls are deliberately synchronous, so advance the
+            # generator in Starlette's worker pool.  Iterating it directly in
+            # this async generator blocks the event loop during every model
+            # request and lets browsers observe all SSE frames only at the end.
+            async for _view, event in iterate_in_threadpool(steps):
                 view = _view
                 yield event.sse()
             status_label = view.status.value if view is not None else "FAILED"
@@ -186,7 +191,7 @@ async def session_events(
         stream(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },

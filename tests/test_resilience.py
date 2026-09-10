@@ -8,6 +8,12 @@ All run offline against an in-memory backend.
 
 from __future__ import annotations
 
+import asyncio
+import json
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+
 from fastapi.testclient import TestClient
 
 from foodarena_ai.domain import (
@@ -62,6 +68,44 @@ def test_running_then_rerun_is_idempotent_and_no_duplicate_chain() -> None:
     assert first.json()["status"] == second.json()["status"] == "SUCCESS"
     assert len(first.json()["messages"]) == 6
     assert len(second.json()["messages"]) == 6
+
+
+def test_concurrent_starts_atomically_claim_one_debate_chain(tmp_path) -> None:
+    database = (tmp_path / "concurrent.sqlite3").as_posix()
+    service = DebateService(database_url=f"sqlite:///{database}")
+    view = service.create_session(_prefs())
+    barrier = threading.Barrier(2)
+    call_count = 0
+    call_lock = threading.Lock()
+
+    class CountingProvider(MockChefProvider):
+        def argument(self, ctx, *, session_id, request_id):
+            nonlocal call_count
+            with call_lock:
+                call_count += 1
+            return super().argument(ctx, session_id=session_id, request_id=request_id)
+
+    service._build_provider = lambda p: CountingProvider()  # type: ignore[method-assign]
+
+    def start() -> list:
+        barrier.wait(timeout=1.0)
+        return list(service.stream_debate(view.session_id))
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _: start(), range(2)))
+
+    assert call_count == 6
+    assert sorted(len(result) for result in results) == [1, 16]
+    stored = service.get_session(view.session_id)
+    assert stored.status.value == "SUCCESS"
+    assert [(message.round, message.agent) for message in stored.messages] == [
+        (1, AgentName.SICHUAN_SPICY),
+        (1, AgentName.CANTONESE_WELLNESS),
+        (2, AgentName.SICHUAN_SPICY),
+        (2, AgentName.CANTONESE_WELLNESS),
+        (3, AgentName.SICHUAN_SPICY),
+        (3, AgentName.CANTONESE_WELLNESS),
+    ]
 
 
 def test_report_before_debate_is_gated_409() -> None:
@@ -153,6 +197,70 @@ def test_sse_stream_contains_all_six_messages_then_done() -> None:
     assert body.count("event: report") == 1
     assert "event: done" in body
     assert "SUCCESS" in body
+    messages = [
+        json.loads(frame.split("data: ", maxsplit=1)[1])
+        for frame in body.split("\n\n")
+        if frame.startswith("event: message")
+    ]
+    assert [(message["round"], message["agent"]) for message in messages] == [
+        (1, AgentName.SICHUAN_SPICY.value),
+        (1, AgentName.CANTONESE_WELLNESS.value),
+        (2, AgentName.SICHUAN_SPICY.value),
+        (2, AgentName.CANTONESE_WELLNESS.value),
+        (3, AgentName.SICHUAN_SPICY.value),
+        (3, AgentName.CANTONESE_WELLNESS.value),
+    ]
+
+
+def test_sse_model_call_does_not_block_event_loop_and_preserves_turn_order() -> None:
+    """A slow provider must not delay delivery of already-produced frames."""
+    import foodarena_ai.main as main
+
+    service = DebateService(in_memory=True)
+    entered = threading.Event()
+    release = threading.Event()
+
+    class GatedProvider(MockChefProvider):
+        def argument(self, ctx, *, session_id, request_id):
+            if ctx.round_number == 1 and ctx.agent is AgentName.SICHUAN_SPICY:
+                entered.set()
+                release.wait(timeout=1.0)
+            return super().argument(ctx, session_id=session_id, request_id=request_id)
+
+    service._build_provider = lambda p: GatedProvider()  # type: ignore[method-assign]
+    view = service.create_session(_prefs())
+
+    async def consume_start() -> None:
+        response = await main.session_events(view.session_id, service)
+        iterator = response.body_iterator
+        first = await anext(iterator)
+        second = await anext(iterator)
+        assert "event: status" in first
+        assert '"status": "RUNNING"' in first
+        assert "event: round_started" in second
+        assert '"agent": "sichuan_spicy"' in second
+
+        # The next frame waits on the provider.  A timer releases that call,
+        # while this sleep proves the FastAPI event loop remains responsive.
+        timer = threading.Timer(0.4, release.set)
+        timer.start()
+        started = time.perf_counter()
+        message_task = asyncio.create_task(anext(iterator))
+        await asyncio.sleep(0.05)
+        assert time.perf_counter() - started < 0.2
+        assert entered.is_set()
+        assert not message_task.done()
+        first_message = await message_task
+        timer.cancel()
+
+        next_turn = await anext(iterator)
+        assert "event: message" in first_message
+        assert '"agent": "sichuan_spicy"' in first_message
+        assert "event: round_started" in next_turn
+        assert '"agent": "cantonese_wellness"' in next_turn
+        await iterator.aclose()
+
+    asyncio.run(consume_start())
 
 
 def test_sse_replay_after_disconnect_does_not_duplicate_messages() -> None:

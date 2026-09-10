@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session as OrmSession
 
 from . import prompts
@@ -648,31 +648,45 @@ class DebateService:
         request_id = bind_request_id()
         mode = provider or self._default_provider
 
-        # (1) claim the session as RUNNING (personas/settings settle here)
+        # (1) Atomically claim the session as RUNNING.  The conditional update
+        # prevents two near-simultaneous SSE connections from both observing
+        # PENDING and starting duplicate, interleaved debate chains.
         with self._session() as db:
-            row = self._fetch_row(db, session_id)
-            if row is None:
-                raise SessionNotFound(session_id)
-            if row.status != SessionStatus.PENDING.value:
-                # Re-entry / already finalised: return current stored state.
-                view = row_to_domain(row)
-                yield view, status_event(session_id, SessionStatus(row.status))
-                return
-            prefs = self._read_preferences(db, row)
-            if personas is not None:
-                resolved_personas = resolve_personas(personas)
-                row.personas_json = encode_personas(resolved_personas)
-            else:
-                resolved_personas = decode_personas(row.personas_json)
-            if settings is not None:
-                resolved_settings = resolve_settings(settings)
-                row.settings_json = encode_settings(resolved_settings)
-            else:
-                resolved_settings = (
-                    decode_settings(row.settings_json) or DebateSettings()
+            claim = db.execute(
+                update(SessionRow)
+                .where(
+                    SessionRow.session_id == str(session_id),
+                    SessionRow.status == SessionStatus.PENDING.value,
                 )
-            row.status = SessionStatus.RUNNING.value
-            db.commit()
+                .values(status=SessionStatus.RUNNING.value)
+            )
+            claimed = claim.rowcount == 1
+            if not claimed:
+                db.rollback()
+                row = self._fetch_row(db, session_id)
+                if row is None:
+                    raise SessionNotFound(session_id)
+                view = row_to_domain(row)
+            else:
+                row = self._fetch_row(db, session_id)
+                prefs = self._read_preferences(db, row)
+                resolved_personas = (
+                    resolve_personas(personas)
+                    if personas is not None
+                    else decode_personas(row.personas_json)
+                )
+                resolved_settings = (
+                    resolve_settings(settings)
+                    if settings is not None
+                    else decode_settings(row.settings_json) or DebateSettings()
+                )
+                row.personas_json = encode_personas(resolved_personas)
+                row.settings_json = encode_settings(resolved_settings)
+                db.commit()
+
+        if not claimed:
+            yield view, status_event(session_id, view.status)
+            return
 
         yield (
             self.get_session(session_id),
