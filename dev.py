@@ -93,7 +93,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if not VENV_PY.exists():
         print(f"❌ 找不到虚拟环境 Python：{VENV_PY}")
-        print("   请先运行：python -m venv .venv && .venv/Scripts/python -m pip install -e \".[dev]\"")
+        print(
+            "   请先运行：python -m venv .venv && "
+            '.venv/Scripts/python -m pip install -e ".[dev]"'
+        )
         return 1
     if not (ROOT / "frontend" / "node_modules").exists():
         print("❌ 前端依赖未安装。请先运行：cd frontend && npm install")
@@ -108,8 +111,16 @@ def main(argv: list[str] | None = None) -> int:
     env["FOODARENA_PROVIDER"] = provider
 
     backend = subprocess.Popen(
-        [str(VENV_PY), "-m", "uvicorn", "foodarena_ai.main:app",
-         "--host", "127.0.0.1", "--port", str(BACKEND_PORT)],
+        [
+            str(VENV_PY),
+            "-m",
+            "uvicorn",
+            "foodarena_ai.main:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(BACKEND_PORT),
+        ],
         cwd=ROOT,
         env=env,
     )
