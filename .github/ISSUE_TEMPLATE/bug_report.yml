@@ -1,0 +1,46 @@
+name: Bug Report
+
+description: 提交缺陷报告（含复现步骤）
+
+title: "[bug] 简述缺陷"
+labels: ["bug"]
+
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: 现象
+      description: 实际发生了什么
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期
+      description: 应该发生什么
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. …
+        2. …
+        3. …
+    validations:
+      required: true
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: 影响
+      options:
+        - P0 - 阻塞
+        - P1 - 高
+        - P2 - 中
+        - P3 - 低
+    validations:
+      required: true

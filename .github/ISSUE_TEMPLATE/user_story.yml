@@ -1,0 +1,44 @@
+name: User Story
+
+description: 一个符合 INVEST 的用户故事（含 Gherkin 验收标准）
+
+title: "[US] 简要描述用户故事"
+labels: ["user-story"]
+
+body:
+  - type: input
+    id: story
+    attributes:
+      label: 用户故事
+      description: 作为…我希望…以便…
+      placeholder: 作为校园学生，我希望…以便…
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收标准（Gherkin）
+      description: Given / When / Then 可执行场景
+      placeholder: |
+        Given …
+        When …
+        Then …
+    validations:
+      required: true
+
+  - type: input
+    id: sprint
+    attributes:
+      label: Sprint
+      placeholder: Sprint 2
+    validations:
+      required: true
+
+  - type: input
+    id: points
+    attributes:
+      label: Story Points
+      placeholder: "5"
+    validations:
+      required: false

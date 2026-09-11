@@ -1,0 +1,19 @@
+# Keep local caches and secrets out of image builds.
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.env
+*.db
+node_modules/
+frontend/node_modules/
+frontend/dist/
+.git/
+.github/
+docs/
+task_plan.md
+findings.md
+progress.md
+.gitignore

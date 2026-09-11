@@ -1,5 +1,30 @@
 """FoodArena AI application package."""
 
+from .debate import (
+    AgentArgument,
+    AgentMessage,
+    AgentName,
+    DebateAgent,
+    DebateController,
+    DebateControllerError,
+    DebateSession,
+    MockDebateAgent,
+    SessionStatus,
+)
+from .domain import (
+    BUILTIN_MENU,
+    CANTONESE_DEFAULT_PERSONA,
+    SICHUAN_DEFAULT_PERSONA,
+    DebateReport,
+    DebateSettings,
+    MenuCatalog,
+    PersonaInput,
+    PersonaStyle,
+    PreferenceInput,
+    ProviderMode,
+    SessionView,
+    Weather,
+)
 from .siliconflow import (
     ChatCompletionResponse,
     SiliconFlowClient,
@@ -10,10 +35,31 @@ from .siliconflow import (
 )
 
 __all__ = [
+    "AgentArgument",
+    "AgentMessage",
+    "AgentName",
+    "BUILTIN_MENU",
+    "CANTONESE_DEFAULT_PERSONA",
     "ChatCompletionResponse",
+    "DebateAgent",
+    "DebateController",
+    "DebateControllerError",
+    "DebateReport",
+    "DebateSession",
+    "DebateSettings",
+    "MenuCatalog",
+    "MockDebateAgent",
+    "PersonaInput",
+    "PersonaStyle",
+    "PreferenceInput",
+    "ProviderMode",
+    "SICHUAN_DEFAULT_PERSONA",
+    "SessionStatus",
+    "SessionView",
     "SiliconFlowClient",
     "SiliconFlowConfig",
     "SiliconFlowError",
     "SiliconFlowRequestError",
     "SiliconFlowResponseError",
+    "Weather",
 ]
