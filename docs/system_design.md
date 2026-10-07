@@ -21,7 +21,7 @@
 flowchart LR
     subgraph System[FoodArena 系统边界]
         UC1[创建选餐会话<br/>US01]
-        UC2[观看三轮双 Agent 辩论<br/>US02]
+        UC2[观看双 Agent 辩论<br/>US02]
         UC3[获取结构化战报<br/>US03]
         UC4[重连恢复会话状态]
     end
@@ -208,7 +208,7 @@ sequenceDiagram
     API-->>UI: 201 {session_id, PENDING}
 
     UI->>API: GET /sessions/{id}/events (SSE)
-    API->>SVC: run_debate(session_id)
+    API->>SVC: stream_debate(session_id)
     SVC->>DB: 条件更新 PENDING -> RUNNING
 
     loop 1 至 max_rounds 轮，每轮 2 Agent
@@ -241,7 +241,7 @@ sequenceDiagram
 stateDiagram-v2
     [*] --> PENDING : POST /sessions
     PENDING --> RUNNING : POST /debate 或 SSE 连接
-    RUNNING --> VALIDATING : 6 条消息全部成功
+    RUNNING --> VALIDATING : 达到 max_rounds 或满足提前结束条件
     VALIDATING --> SUCCESS : 裁决成功并持久化战报
     RUNNING --> FAILED : Agent/模型/Schema 失败
     VALIDATING --> FAILED : 裁决失败
@@ -252,7 +252,7 @@ stateDiagram-v2
 补充说明
 
 - 只有 `PENDING` 允许启动辩论；重复启动/已完成会话再次调用返回当前状态，
-  绝不产生第二条执行链（图 5 中 `run_debate` 的幂等语义）。
+  按 PENDING 条件认领设计，不应产生第二条执行链（图 5 中 `stream_debate` 的幂等语义）。
 - `FAILED` 会话永不返回伪造的成功战报：`GET /report` 仅对 `SUCCESS` 开放，
   否则返回 `409`。
 - 当前前端失败页“重试”只是刷新页面；后端会重放 `FAILED` 状态，不能将同一会话重新置为 `RUNNING`。需新建会话，或另行设计重试接口。该文案与行为不一致，列为后续改进。
@@ -269,3 +269,7 @@ stateDiagram-v2
 | US01–US03 基础 BDD | `tests/features/` |
 
 基线：[GitHub 仓库 `496eb9d82c`](https://github.com/wujiade-2005/foodarena-ai/tree/496eb9d82c)。图为实现抽象；类图中的 `DebateSession` 表示领域会话概念，在代码中由 `SessionView`/`SessionRow` 分别承担对外契约和持久化职责。
+
+## 推导边界
+
+六图是当前源码的静态抽象，不是原始设计会议记录，也不证明部署、性能或运行成功。每项结论应返回上述固定基线源码核对；测试文件只表明存在断言，测试是否通过须查看独立执行结果。用户故事、Sprint 报告和本文均为新增分析，不能互作事实证据。
