@@ -219,14 +219,14 @@ docker compose up --build
 
 ## 团队与敏捷过程
 
-项目按 **4 个 Sprint**、Issue、PR 审查和 Angular 提交规范推进。以下分工依据公开 GitHub
+Issue 标题按 **4 个 Sprint** 分类，提交历史包含 PR 合并和 Angular 风格前缀；仅凭这些记录不能确认实际时间盒和每次审查过程。以下分工依据公开 GitHub
 记录整理；Issue 未设置 Assignee，因此不把 Issue 创建者直接视为开发负责人。
 
 | 账号 / 工具 | 可核验贡献 | 依据 |
 | --- | --- | --- |
 | `wujiade-2005` | 仓库初始化、Sprint Issue 规划、PR 集成与仓库维护 | 初始提交、26 个 Issue 创建记录、PR #27/#29 合并提交 |
 | `Lnxy-0` | SiliconFlow 接入、轮次控制、FastAPI/SQLite、React/SSE、测试评测、Docker/CI、文档与缺陷修复 | 13 个可见提交；PR #27/#29 已合并，PR #28 尚未合并 |
-| Claude Haiku 4.5 | AI 协同生成与审阅，作为 Co-authored-by 记录在多次提交中 | Git 提交元数据 |
+| Claude Haiku 4.5 | 多次提交的 Co-authored-by 元数据署名；不能据此确认实际调用或审阅过程 | Git 提交元数据 |
 
 完整过程材料：
 
