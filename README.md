@@ -1,7 +1,7 @@
 # 🍜 FoodArena AI · 校园干饭辩论赛
 
 > 基于敏捷方法的 AI 原生选餐决策应用：两个 AI 大厨（**川辣派** vs **粤式养生派**）
-> 围绕你的口味、预算、天气与同行人数进行 3 轮辩论，最终由裁决器出具一份可解释的
+> 围绕你的口味、预算、天气与同行人数进行最多 3 轮辩论，最终由裁决器出具一份可解释的
 > **干饭战报**——菜品、理由、置信度与四维评分。
 
 ![python](https://img.shields.io/badge/python-3.11%2B-3776ab?logo=python)
@@ -39,7 +39,7 @@
 
 **MVP（Sprint 1–2 已完成）**
 - 输入偏好（口味 / 预算 / 天气 / 同行人数）并创建可追踪会话；
-- 川辣派与粤式养生派严格交替完成 3 轮共 6 条结构化消息；
+- 川辣派与粤式养生派严格交替发言；默认最多 3 轮，满足收敛条件时可提前结束；
 - 裁决器出具战报：`dish` + `reason` + `confidence` + 四维 `score_breakdown`
   （口味 / 预算 / 天气 / 辩论表现）；
 - 会话状态机 `PENDING → RUNNING → VALIDATING → SUCCESS / FAILED`，全程持久化到 SQLite。
@@ -186,7 +186,7 @@ cd frontend
 npm run lint && npm run typecheck && npm run test && npm run build
 ```
 
-当前基线：**85 个后端测试全部通过；BDD 6 场景通过；评测集 22/22（100%）**。
+当前基线（2026-10-07 本地复核）：**98 个后端测试通过；BDD 场景包含在测试集内；评测集 22/22（100%）**。
 CI（`.github/workflows/ci.yml`）在 Push/PR 自动执行以上全部门禁。
 
 ---
@@ -211,16 +211,28 @@ docker compose up --build
 一份可复现的 3 分钟演示路径（无需真实数据 / 真实 Key）：
 
 1. 打开首页，输入：口味**清淡** · 预算 **12 元** · 天气**热** · 同行 **1 人**；
-2. 观看川辣派与粤式养生派 3 轮 6 条交替发言（SSE 实时，含证据佐证）；
-3. 自动跳转战报页：推荐菜品 + 理由 + 置信度 + 口味/预算/天气/辩论四维评分；
+2. 观看川辣派与粤式养生派最多 3 轮交替发言（SSE 实时，含证据佐证）；
+3. 辩论成功后点击“查看完整战报与评分”，查看推荐菜品、理由、置信度和四维评分；
 4. （可选）刷新页面 / 断开重连，会话从存储恢复，不重复辩论。
 
 ---
 
 ## 团队与敏捷过程
 
-由敏捷工程实践小组按 **4 个 Sprint**、Issue + GitHub Projects 看板 + PR 审查 +
-Angular 提交规范协作完成。分工与贡献清单见各 Sprint 报告与项目看板。
+项目按 **4 个 Sprint**、Issue、PR 审查和 Angular 提交规范推进。以下分工依据公开 GitHub
+记录整理；Issue 未设置 Assignee，因此不把 Issue 创建者直接视为开发负责人。
+
+| 账号 / 工具 | 可核验贡献 | 依据 |
+| --- | --- | --- |
+| `wujiade-2005` | 仓库初始化、Sprint Issue 规划、PR 集成与仓库维护 | 初始提交、26 个 Issue 创建记录、PR #27/#29 合并提交 |
+| `Lnxy-0` | SiliconFlow 接入、轮次控制、FastAPI/SQLite、React/SSE、测试评测、Docker/CI、文档与缺陷修复 | 13 个可见提交；PR #27/#29 已合并，PR #28 尚未合并 |
+| Claude Haiku 4.5 | AI 协同生成与审阅，作为 Co-authored-by 记录在多次提交中 | Git 提交元数据 |
+
+完整过程材料：
+
+- 系统三大模型六图：[docs/system_design.md](docs/system_design.md)
+- 核心 User Story 规约：[docs/user_stories/](docs/user_stories/)
+- Sprint 复盘：[Sprint 1](docs/sprint1_report.md) · [Sprint 2](docs/sprint2_report.md) · [Sprint 3](docs/sprint3_report.md) · [Sprint 4](docs/sprint4_report.md)
 
 - 仓库约定与 AI 协作规则：[AGENTS.md](AGENTS.md)
 - Issue / PR 模板：`.github/ISSUE_TEMPLATE/` · `.github/PULL_REQUEST_TEMPLATE.md`
@@ -237,7 +249,7 @@ Angular 提交规范协作完成。分工与贡献清单见各 Sprint 报告与�
 
 **Roadmap（后续 Backlog）**
 - 接入真实食堂/外卖菜单与开放菜价；
-- 支持用户自定义 Agent 性格与辩论轮数；
+- 增加 `FAILED` 会话的真正重试接口，并使前端重试文案与行为一致；
 - 评测集纳入真实模型回归基线。
 
 ---
